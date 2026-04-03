@@ -422,6 +422,7 @@ class DispatchTestCase(TRTTestCase):
         immutable_weights=True,
         use_explicit_typing=False,
         decompose_attention=False,
+        attn_bias_is_causal=True,
     ):
         # TODO: lan to remove this and set use_dynamo_traccer to True by default
         # once all the converter test files are moved to use_dynamo_tracer
@@ -434,6 +435,7 @@ class DispatchTestCase(TRTTestCase):
             immutable_weights=immutable_weights,
             use_explicit_typing=use_explicit_typing,
             decompose_attention=decompose_attention,
+            attn_bias_is_causal=attn_bias_is_causal,
         )
 
         mod = self.generate_graph(
