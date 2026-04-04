@@ -3858,11 +3858,7 @@ def aten_ops_linear(
 def scaled_dot_product_attention_validator(
     node: Node, settings: Optional[CompilationSettings] = None
 ) -> bool:
-    if node.kwargs.get("enable_gqa", False):
-        _LOGGER.debug(
-            "enable_gqa is not yet supported by the converter. Please try setting decompose_attention=True in the compilation settings."
-        )
-        return False
+    enable_gqa = node.kwargs.get("enable_gqa", False)
 
     query_shape, key_shape, value_shape = None, None, None
     if "val" in node.args[0].meta:
@@ -3871,15 +3867,57 @@ def scaled_dot_product_attention_validator(
         key_shape = node.args[1].meta["val"].size()
     if "val" in node.args[2].meta:
         value_shape = node.args[2].meta["val"].size()
-    if (
-        query_shape != key_shape
-        or query_shape != value_shape
-        or key_shape != value_shape
-    ):
+
+    if key_shape != value_shape:
         _LOGGER.debug(
-            "query, key, and value have different shapes. Please try setting decompose_attention=True in the compilation settings."
+            "key and value have different shapes, which is not supported. Please try setting decompose_attention=True in the compilation settings."
         )
         return False
+
+    if query_shape is not None and key_shape is not None:
+        if len(query_shape) != len(key_shape):
+            _LOGGER.debug(
+                "query and key have different ranks, which is not supported."
+            )
+            return False
+        ndim = len(query_shape)
+        if enable_gqa:
+            # IAttentionLayer natively supports GQA: Q and K/V may differ on the
+            # head dim (dim 1) as long as Hq is divisible by Hkv.
+            # Check batch (dim 0) and head_dim (last dim) match; skip seq (dim -2)
+            # and head (dim 1) dims.
+            head_dim = ndim - 1
+            seq_dim = ndim - 2
+            heads_dim = 1
+            for i in range(ndim):
+                if i in (seq_dim, heads_dim):
+                    continue
+                if query_shape[i] != key_shape[i]:
+                    _LOGGER.debug(
+                        f"query and key mismatch on dim {i} with enable_gqa=True."
+                    )
+                    return False
+            num_q_heads = query_shape[1]
+            num_kv_heads = key_shape[1]
+            if num_q_heads % num_kv_heads != 0:
+                _LOGGER.debug(
+                    f"enable_gqa=True but num_q_heads={num_q_heads} is not divisible "
+                    f"by num_kv_heads={num_kv_heads}."
+                )
+                return False
+        else:
+            # IAttentionLayer supports decode-phase (seq_q != seq_k).
+            # Check all dims except the seq dim.
+            seq_dim = ndim - 2
+            if any(
+                query_shape[i] != key_shape[i]
+                for i in range(ndim)
+                if i != seq_dim
+            ):
+                _LOGGER.debug(
+                    "query and key have incompatible shapes (batch, heads, or head_dim mismatch). Please try setting decompose_attention=True in the compilation settings."
+                )
+                return False
     return True
 
 
@@ -3926,15 +3964,50 @@ def scaled_dot_product_flash_attention_validator(
         key_shape = node.args[1].meta["val"].size()
     if "val" in node.args[2].meta:
         value_shape = node.args[2].meta["val"].size()
-    if (
-        query_shape != key_shape
-        or query_shape != value_shape
-        or key_shape != value_shape
-    ):
+    if key_shape != value_shape:
         _LOGGER.debug(
-            "query, key, and value have different shapes. Please try setting decompose_attention=True in the compilation settings."
+            "key and value have different shapes, which is not supported. Please try setting decompose_attention=True in the compilation settings."
         )
         return False
+    if query_shape is not None and key_shape is not None:
+        if len(query_shape) != len(key_shape):
+            _LOGGER.debug(
+                "query and key have different ranks, which is not supported."
+            )
+            return False
+        ndim = len(query_shape)
+        seq_dim = ndim - 2
+        heads_dim = 1
+        num_q_heads = query_shape[heads_dim]
+        num_kv_heads = key_shape[heads_dim]
+        is_gqa = num_q_heads != num_kv_heads
+        if is_gqa:
+            # GQA: IAttentionLayer natively handles Hq != Hkv.
+            # Require batch/head_dim to match and Hq divisible by Hkv.
+            for i in range(ndim):
+                if i in (seq_dim, heads_dim):
+                    continue
+                if query_shape[i] != key_shape[i]:
+                    _LOGGER.debug(
+                        f"GQA: query and key mismatch on dim {i}."
+                    )
+                    return False
+            if num_q_heads % num_kv_heads != 0:
+                _LOGGER.debug(
+                    f"GQA: num_q_heads={num_q_heads} not divisible by num_kv_heads={num_kv_heads}."
+                )
+                return False
+        else:
+            # MHA / decode-phase: seq may differ, all other dims must match.
+            if any(
+                query_shape[i] != key_shape[i]
+                for i in range(ndim)
+                if i != seq_dim
+            ):
+                _LOGGER.debug(
+                    "query and key have incompatible shapes (batch, heads, or head_dim mismatch). Please try setting decompose_attention=True in the compilation settings."
+                )
+                return False
     return True
 
 
@@ -3980,15 +4053,31 @@ def scaled_dot_product_efficient_attention_validator(
         key_shape = node.args[1].meta["val"].size()
     if "val" in node.args[2].meta:
         value_shape = node.args[2].meta["val"].size()
-    if (
-        query_shape != key_shape
-        or query_shape != value_shape
-        or key_shape != value_shape
-    ):
+    if key_shape != value_shape:
         _LOGGER.debug(
-            "query, key, and value have different shapes. Please try setting decompose_attention=True in the compilation settings."
+            "key and value have different shapes, which is not supported. Please try setting decompose_attention=True in the compilation settings."
         )
         return False
+    # GQA (Hq != Hkv) is intentionally not supported here.
+    # PyTorch's eager _scaled_dot_product_efficient_attention kernel rejects
+    # non-equal head counts at runtime, so no valid reference output exists for
+    # comparison.  In practice, GQA models on CUDA dispatch to
+    # _scaled_dot_product_flash_attention (FP16/BF16) or decompose into
+    # matmul+_safe_softmax (FP32) — this op never appears with GQA shapes in
+    # a real FX graph.  GQA is handled by the flash attention validator instead.
+    #
+    # IAttentionLayer does support decode-phase (seq_q != seq_k), so only the
+    # sequence dimension is skipped in the shape check below.
+    if query_shape is not None and key_shape is not None:
+        if len(query_shape) != len(key_shape) or any(
+            query_shape[i] != key_shape[i]
+            for i in range(len(query_shape))
+            if i != len(query_shape) - 2  # skip the seq dim
+        ):
+            _LOGGER.debug(
+                "query and key have incompatible shapes (batch, heads, or head_dim mismatch). Please try setting decompose_attention=True in the compilation settings."
+            )
+            return False
     return True
 
 
