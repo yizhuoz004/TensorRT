@@ -189,7 +189,13 @@ bool InstanceNormConverter(ConversionCtx* ctx, const torch::jit::Node* n, args& 
   fc.nbFields = f.size();
   fc.fields = f.data();
 
+  // TRT 11.0 renamed getPluginCreator → getCreator with IPluginCreatorInterface return type
+#if NV_TENSORRT_MAJOR >= 11
+  auto* creator_iface = getPluginRegistry()->getCreator("InstanceNormalization_TRT", "1", "");
+  auto* creator = dynamic_cast<nvinfer1::IPluginCreator*>(creator_iface);
+#else
   auto creator = getPluginRegistry()->getPluginCreator("InstanceNormalization_TRT", "1", "");
+#endif
   auto instance_norm_plugin = creator->createPlugin("instance_norm", &fc);
 
   TORCHTRT_CHECK(instance_norm_plugin, "Unable to create instance_norm plugin from TensorRT plugin registry" << *n);

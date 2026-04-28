@@ -49,8 +49,13 @@ ConversionCtx::ConversionCtx(BuilderSettings build_settings)
   }
 
   builder = make_trt(nvinfer1::createInferBuilder(logger));
+  // kEXPLICIT_BATCH was removed in TRT 11 (explicit batch is always on); pass 0 on TRT 11+.
+#if NV_TENSORRT_MAJOR >= 11
+  net = make_trt(builder->createNetworkV2(0));
+#else
   net = make_trt(
       builder->createNetworkV2(1U << static_cast<uint32_t>(nvinfer1::NetworkDefinitionCreationFlag::kEXPLICIT_BATCH)));
+#endif
 
   LOG_INFO(settings);
   cfg = make_trt(builder->createBuilderConfig());
@@ -59,7 +64,8 @@ ConversionCtx::ConversionCtx(BuilderSettings build_settings)
     switch (*p) {
       case nvinfer1::DataType::kHALF:
 // tensorrt_rtx is strong typed, cannot set fp16 by builder config, only do this for tensorrt build
-#ifndef TRT_MAJOR_RTX
+// TRT 11.0 removed platformHasFastFp16 and kFP16 (always strongly typed).
+#if !defined(TRT_MAJOR_RTX) && NV_TENSORRT_MAJOR < 11
         TORCHTRT_CHECK(
             builder->platformHasFastFp16(), "Requested inference in FP16 but platform does not support FP16");
         cfg->setFlag(nvinfer1::BuilderFlag::kFP16);

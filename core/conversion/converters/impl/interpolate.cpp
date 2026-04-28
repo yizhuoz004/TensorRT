@@ -54,7 +54,13 @@ void create_plugin(
 
   fc.nbFields = f.size();
   fc.fields = f.data();
+  // TRT 11.0 renamed getPluginCreator → getCreator with IPluginCreatorInterface return type
+#if NV_TENSORRT_MAJOR >= 11
+  auto* creator_iface = getPluginRegistry()->getCreator("Interpolate", "1", "torch_tensorrt");
+  auto* creator = dynamic_cast<nvinfer1::IPluginCreator*>(creator_iface);
+#else
   auto creator = getPluginRegistry()->getPluginCreator("Interpolate", "1", "torch_tensorrt");
+#endif
   auto interpolate_plugin = creator->createPlugin(name, &fc);
 
   auto resize_layer = ctx->net->addPluginV2(reinterpret_cast<nvinfer1::ITensor* const*>(&in), 1, *interpolate_plugin);

@@ -42,7 +42,13 @@ void create_plugin(
     }
   }
 
+  // TRT 11.0 renamed getPluginCreator → getCreator with IPluginCreatorInterface return type
+#if NV_TENSORRT_MAJOR >= 11
+  auto* creator_iface = getPluginRegistry()->getCreator("NormalizePlugin", "1", "torch_tensorrt");
+  auto* creator = dynamic_cast<nvinfer1::IPluginCreator*>(creator_iface);
+#else
   auto creator = getPluginRegistry()->getPluginCreator("NormalizePlugin", "1", "torch_tensorrt");
+#endif
   auto plugin = creator->createPlugin(name, &fc);
   auto normalize_layer = ctx->net->addPluginV2(reinterpret_cast<nvinfer1::ITensor* const*>(&in), 1, *plugin);
   TORCHTRT_CHECK(normalize_layer, "Unable to create normalization plugin from node" << *n);

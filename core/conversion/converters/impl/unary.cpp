@@ -89,7 +89,9 @@ auto sqrt_registration TORCHTRT_UNUSED = RegisterNodeConversionPatterns().patter
        auto unary_layer = ctx->net->addUnary(*in, nvinfer1::UnaryOperation::kSQRT);
        TORCHTRT_CHECK(unary_layer, "Unable to create sqrt layer from node: " << *n);
        unary_layer->setName(util::node_info(n).c_str());
+#if NV_TENSORRT_MAJOR < 11
        unary_layer->setOutputType(0, in->getType());
+#endif
        auto out_tensor = ctx->AssociateValueAndTensor(n->outputs()[0], unary_layer->getOutput(0));
        LOG_DEBUG("Output tensor shape: " << out_tensor->getDimensions());
        return true;

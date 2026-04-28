@@ -51,7 +51,9 @@ auto layer_norm_registrations TORCHTRT_UNUSED = RegisterNodeConversionPatterns()
       TORCHTRT_CHECK(normalize_layer, "Unable to create layer_norm from node: " << *n);
       normalize_layer->setName(util::node_info(n).c_str());
       normalize_layer->setEpsilon(eps);
+#if NV_TENSORRT_MAJOR < 11
       normalize_layer->setComputePrecision(input->getType());
+#endif
       auto normalized = normalize_layer->getOutput(0);
 
       ctx->AssociateValueAndTensor(n->outputs()[0], normalized);

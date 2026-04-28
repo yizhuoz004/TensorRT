@@ -935,7 +935,9 @@ class TRTInterpreter(torch.fx.Interpreter):  # type: ignore[misc]
                     output_dtype = self.output_dtypes[i]
 
             self.ctx.net.mark_output(output)
-            if output_dtype is not dtype.unknown:
+            if output_dtype is not dtype.unknown and not self.ctx.net.get_flag(
+                trt.NetworkDefinitionCreationFlag.STRONGLY_TYPED
+            ):
                 output.dtype = output_dtype.to(trt.DataType, use_default=True)
             output.name = name
 

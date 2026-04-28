@@ -30,6 +30,24 @@ class TorchTRTPluginRegistry {
     plugin_logger.set_reportable_log_level(util::logging::get_logger().get_reportable_log_level());
 
     int numCreators = 0;
+    // TRT 11.0 renamed getPluginCreatorList → getAllCreators with IPluginCreatorInterface return type
+#if NV_TENSORRT_MAJOR >= 11
+    auto pluginsList = getPluginRegistry()->getAllCreators(&numCreators);
+    for (int k = 0; k < numCreators; ++k) {
+      if (!pluginsList[k]) {
+        plugin_logger.log(util::logging::LogLevel::kDEBUG, "Plugin creator for plugin " + str(k) + " is a nullptr");
+        continue;
+      }
+      auto* creator_v1 = dynamic_cast<nvinfer1::IPluginCreator*>(pluginsList[k]);
+      if (creator_v1) {
+        std::string pluginNamespace = creator_v1->getPluginNamespace();
+        plugin_logger.log(
+            util::logging::LogLevel::kDEBUG,
+            "Registered plugin creator - " + std::string(creator_v1->getPluginName()) +
+                ", Namespace: " + pluginNamespace);
+      }
+    }
+#else
     auto pluginsList = getPluginRegistry()->getPluginCreatorList(&numCreators);
     for (int k = 0; k < numCreators; ++k) {
       if (!pluginsList[k]) {
@@ -42,6 +60,7 @@ class TorchTRTPluginRegistry {
           "Registered plugin creator - " + std::string(pluginsList[k]->getPluginName()) +
               ", Namespace: " + pluginNamespace);
     }
+#endif
     plugin_logger.log(util::logging::LogLevel::kDEBUG, "Total number of plugins registered: " + str(numCreators));
   }
 
